@@ -1,0 +1,357 @@
+# KACP Specification
+## Kcode Artery Connection Protocol — External Implementation Guide v1.1
+
+> This document is intended for external developers who want to connect
+> their application or library to the Kcode Ontology Engine using KACP.
+>
+> License: Apache License 2.0
+
+---
+
+## 1. Basic Principles
+
+```
+Transport:    TCP binary socket
+Alignment:    32 bytes (all blocks)
+Header size:  64 bytes fixed (2 blocks)
+Port:         7070 (single port)
+Magic:        "KEXT" (external languages only)
+```
+
+---
+
+## 2. Packet Structure
+
+```
+┌──────────────────────────────┐
+│   HEADER Block 1  (32 bytes) │  Required
+│   HEADER Block 2  (32 bytes) │  Required
+├──────────────────────────────┤
+│   AUTH Block      (32 bytes) │  KEXT mandatory
+├──────────────────────────────┤
+│   Data Blocks  (32 bytes × N)│  Variable
+└──────────────────────────────┘
+
+Minimum packet size: 96 bytes (Header 64 + AUTH 32)
+```
+
+---
+
+## 3. Header Structure (64 bytes)
+
+### Block 1 (32 bytes) — Basic Info
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 4 | magic | `"KEXT"` fixed |
+| 4 | 1 | version | Protocol version (currently 1) |
+| 5 | 1 | flags | Bit flags (see below) |
+| 6 | 1 | chunk_index | Chunk sequence number (0-based) |
+| 7 | 1 | chunk_total | Total number of chunks |
+| 8 | 2 | data_blocks | Number of data blocks |
+| 10 | 2 | ont_blocks | Number of ONT response blocks |
+| 12 | 4 | scene_id | Scene ID (0 if unused) |
+| 16 | 4 | sequence | Packet sequence number |
+| 20 | 4 | timestamp | Unix timestamp (seconds) |
+| 24 | 8 | checksum | SHA-256 first 8 bytes (see Section 10) |
+
+### Block 2 (32 bytes) — Link ID + Permissions
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 32 | 16 | link_id | ONT-issued link ID (0x00 = new) |
+| 48 | 1 | access_level | 0=private / 1=shared / 2=public / 0xFF=unset |
+| 49 | 1 | render_allow | 0=deny / 1=allow / 0xFF=unset |
+| 50 | 1 | copy_allow | 0=deny / 1=allow / 0xFF=unset |
+| 51 | 1 | learn_allow | 0=deny / 1=allow / 0xFF=unset |
+| 52 | 12 | reserved | Fill with 0x00 |
+
+---
+
+## 4. Flags Bit Definition
+
+```
+bit 0:    direction     0=request / 1=response
+bit 1:    transfer      0=reference / 1=chunked
+bit 2:    is_last       1=last chunk
+bit 3~4:  priority      00=normal / 01=owner / 10=urgent
+bit 5~7:  packet_type   000=query / 001=response
+                        010=push  / 011=ACK
+```
+
+---
+
+## 5. AUTH Block (32 bytes) — KEXT Mandatory
+
+> Every KEXT packet MUST include the AUTH block immediately after the header.
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 24 | auth_token | Authentication token |
+| 24 | 1 | token_type | 0=API Key / 1=JWT |
+| 25 | 1 | rate_limit | 0=normal / 1=premium |
+| 26 | 6 | reserved | Fill with 0x00 |
+
+---
+
+## 6. Data Block Types
+
+### Type 1 — Concept Identifier (32 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 32 | concept_name | Concept name (UTF-8, zero-padded) |
+
+### Type 2 — Attribute Data (32 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 1 | attr_type | Attribute type |
+| 1 | 1 | attr_count | Number of attributes |
+| 2 | 2 | reserved | Padding |
+| 4 | 28 | attr_values | float × 7 |
+
+### Type 3 — Spatial Coordinates (32 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 12 | xyz | float × 3 (x, y, z) |
+| 12 | 4 | zone_id | Zone ID |
+| 16 | 1 | obj_type | 0=static / 1=dynamic |
+| 17 | 1 | channel_flag | Changed channel bitmask |
+| 18 | 14 | reserved | Padding |
+
+### Type 4 — Delta Values (32 bytes)
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 32 | delta | float × 8 (change values) |
+
+> Do NOT send if all delta values are 0.
+
+---
+
+## 7. Transfer Modes
+
+### Chunked Transfer — New Data
+
+```
+Use when registering a new concept or object for the first time.
+
+flags bit1 = 1 (chunked)
+chunk_total  = total number of chunks
+chunk_index  = 0, 1, 2 ... in order
+flags bit2   = 1 on the last chunk (is_last)
+
+The receiver reassembles all chunks before processing.
+```
+
+### Reference Transfer — Existing Data
+
+```
+Use when updating an already-registered concept or object.
+
+flags bit1  = 0 (reference)
+link_id     = previously issued value
+Send ONLY blocks where delta > 0.
+If delta == 0, do NOT send — skip entirely.
+```
+
+---
+
+## 8. link_id Issuance Procedure
+
+```
+Step 1 — Send registration request
+    Set header link_id = 0x00 (all 16 bytes zero)
+    Include concept name in data block
+    Send packet
+
+Step 2 — Receive response
+    Response header link_id = issued 16-byte value
+    Store this value — it is required for all future packets
+
+Step 3 — All subsequent communication
+    Always include the issued link_id in the header
+```
+
+---
+
+## 9. Authentication Token
+
+```
+Contact the Ontology Engine administrator to obtain:
+    API Key  → token_type = 0
+    JWT      → token_type = 1
+
+Insert into AUTH block auth_token field.
+Every KEXT packet must include a valid AUTH block.
+```
+
+---
+
+## 10. Checksum Calculation
+
+```
+Scope:
+    Header Block 1 bytes 0~23 (24 bytes, checksum field set to 0x00)
+    + AUTH block (32 bytes)
+    + All data blocks
+
+Method:
+    1. Set checksum field to 0x00
+    2. Compute SHA-256 over the above data
+    3. Take the first 8 bytes
+    4. Write into header offset 24
+
+Verification:
+    Receiver performs the same calculation and compares.
+    Mismatch → packet discarded.
+```
+
+---
+
+## 11. TLS Requirement
+
+```
+All KEXT connections MUST use TLS.
+Plain TCP connections from KEXT are rejected by the server.
+
+TLS version:  TLS 1.2 minimum (TLS 1.3 recommended)
+Port:         7070
+```
+
+---
+
+## 12. Packet Example — Concept Query
+
+```
+Goal: Query the concept "TemperatureSensor"
+
+Header Block 1:
+    magic        = "KEXT"
+    version      = 1
+    flags        = 0b00000000   (request / reference / normal / query)
+    chunk_index  = 0
+    chunk_total  = 1
+    data_blocks  = 1
+    ont_blocks   = 0
+    scene_id     = 0
+    sequence     = 1
+    timestamp    = [current Unix time]
+    checksum     = [calculated value]
+
+Header Block 2:
+    link_id      = [previously issued link_id]
+    access_level = 0xFF
+    render_allow = 0xFF
+    copy_allow   = 0xFF
+    learn_allow  = 0xFF
+    reserved     = 0x00...
+
+AUTH Block:
+    auth_token   = [your token]
+    token_type   = 0   (API Key)
+    rate_limit   = 0   (normal)
+    reserved     = 0x00...
+
+Data Block 1 (Concept Identifier):
+    concept_name = "TemperatureSensor\0\0..."   (32 bytes, zero-padded)
+```
+
+---
+
+## 13. Response Handling
+
+```
+Response packet:
+    flags bit0 = 1   (response)
+    ont_blocks = number of ONT response blocks
+
+ONT Response Block 1 — Concept Node (32 bytes):
+    concept_node[32]   mapped ontology concept name
+
+ONT Response Block 2 — Result (32 bytes):
+    constraint_flag    0=Pass / 1=Fail
+    suggestion_type    action suggestion type
+    ont_status         ontology match status
+    error_code         see error codes below
+    suggestion[7]      advisory values (float × 7)
+```
+
+---
+
+## 14. Error Codes
+
+| Code | Description |
+|------|-------------|
+| 0x00 | Success |
+| 0x01 | Authentication failed |
+| 0x02 | Permission denied |
+| 0x03 | Rate limit exceeded |
+| 0x04 | Concept not found |
+| 0x05 | Checksum mismatch |
+| 0x06 | Invalid block structure |
+| 0xFF | Server error |
+
+---
+
+## 15. Security Model
+
+```
+All KEXT connections go through 6-step verification:
+
+    1. KACPHeader structure validation
+    2. Checksum verification (includes AUTH block)
+    3. link_id validation
+    4. Authentication token verification
+    5. Permission check
+    6. Rate limit check
+
+4-Layer security stack:
+    TLS             Encryption in transit (mandatory)
+    checksum        Packet integrity (AUTH block included)
+    sequence        Packet loss and order detection
+    timestamp       Replay attack prevention (±30 second window)
+```
+
+---
+
+## 16. Implementation Checklist
+
+```
+□ magic[4] = "KEXT"
+□ Confirm byte order: little-endian for all multi-byte integers
+□ AUTH block always included after header
+□ checksum: SHA-256 first 8 bytes (set field to 0x00 before computing)
+□ link_id issuance flow implemented
+□ Chunked / reference transfer branching implemented
+□ Delta == 0 → do not send
+□ Response error code handling
+□ TLS connection (mandatory for KEXT)
+□ TCP keep-alive / reconnect handling
+```
+
+---
+
+## 17. Encoding Notes
+
+```
+Byte order:   Little-endian for all multi-byte integers
+Float:        IEEE 754 single precision
+Strings:      UTF-8 encoding, remaining bytes filled with 0x00
+Alignment:    All blocks must be exactly 32 bytes
+              Padding fields must be 0x00
+```
+
+---
+
+## 18. C Header Reference
+
+See `spec/kacp_header.h` for complete C/C++ struct definitions.
+
+---
+
+*KACP — Kcode Artery Connection Protocol Specification v1.1*
+*External Implementation Guide*
+*Apache License 2.0*
