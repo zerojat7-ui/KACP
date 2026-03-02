@@ -70,7 +70,7 @@ External languages can also connect via KEXT magic code.
 ## Security Model
 
 ```
-Internal Engines (KDNA / KLNG / KONT):
+Internal Engines (engine-to-engine):
     3-step verification
     TLS: configurable (off for development)
 
@@ -96,7 +96,7 @@ Layer 4  timestamp    Replay attack prevention (±30s window)
 
 ```c
 typedef struct {
-    uint8_t internal_tls;   // KDNA/KLNG/KONT — 0=off(dev) / 1=on
+    uint8_t internal_tls;   // engine-to-engine — 0=off(dev) / 1=on
     uint8_t external_tls;   // KEXT — always 1, cannot be set to 0
     // ...
 } KACPTLSConfig;
