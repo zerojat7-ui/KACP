@@ -1,5 +1,5 @@
 # KACP Specification
-## Kcode Artery Connection Protocol — External Implementation Guide v1.2
+## Kcode Artery Connection Protocol — External Implementation Guide v1.3
 
 > This document is intended for external developers who want to connect
 > their application or library to the Kcode Ontology Engine using KACP.
@@ -177,6 +177,80 @@ Key properties:
     Concept node reference uses hash values, not sequential numbers
 ```
 
+### 8-1. Engine Registration
+
+```
+Before issuing any link_id, your Ontology Engine must be registered
+with the central Kcode Engine Server.
+
+Registration flow:
+    Engine first boot
+        → Send registration request to central server
+        → Receive unique Engine ID (4 bytes)
+        → Engine ID is embedded in all subsequently issued link_ids
+
+Offline / central server unavailable:
+    Engine uses Provisional ID range (0xFF000000 ~ 0xFFFFFFFF)
+    → All link_ids issued under Provisional ID are treated as
+      Knowledge Maturity Level 0 (isolated, not merged to main tree)
+    → Upon reconnection: re-register → receive official Engine ID
+      → all provisional link_ids re-issued under official Engine ID
+```
+
+### 8-2. Engine ID Lifecycle
+
+```
+Engines that remain inactive for extended periods go through
+the following lifecycle stages:
+
+    Active        Normal operation
+    Warning       2 years inactive  → notification sent with knowledge status report
+    Final Warning 2.5 years inactive → final notification
+    Frozen        3 years inactive  → new link_id issuance suspended
+                                      existing link_ids remain queryable
+                                      recovery window open (2 years)
+    Terminated    5 years inactive  → Engine ID permanently retired
+                                      Knowledge Afterlife Policy executed
+
+Recovery during Frozen state:
+    Identity verification → re-activation
+    All existing link_ids remain valid
+```
+
+### 8-3. Knowledge Afterlife Policy
+
+```
+When registering knowledge, you must select one of four policies
+that govern what happens to your knowledge if your Engine ID is terminated.
+This selection is recorded as legal consent.
+
+Option A — Private Forever:
+    Knowledge is frozen on engine termination
+    No public access / no merging
+    Recoverable only by owner or designated heir (no time limit)
+    → For confidential or unpublished patents
+
+Option B — Delayed Public [Default]:
+    Knowledge becomes public after N years of engine termination
+    N = 1~10 years (default: 3 years)
+    Similarity-based merge check applied on publication
+    → For general knowledge and academic content
+
+Option C — Public on Termination:
+    Knowledge becomes public immediately on engine termination
+    → For open-source and academic sharing
+
+Option D — Designated Successor:
+    Ownership transferred to a designated successor Engine ID on termination
+    Falls back to Option B if successor is also terminated
+    → For corporate succession and inheritance planning
+
+Merge policy (selected at registration):
+    Allow merge      → Automatically merged with similar knowledge
+    Deny merge       → Preserved as independent node (for patents)
+    Level 2 only     → Merged only with universally verified knowledge
+```
+
 ### Issuance Flow
 
 ```
@@ -188,6 +262,7 @@ Step 1 — Send registration request
 Step 2 — Ontology Engine processes request
     Maps concept to internal node
     Generates link_id (16 bytes) with integrity signature
+    Records issuance to central log
     Returns link_id in response packet header
 
 Step 3 — Client stores link_id
@@ -378,7 +453,10 @@ All KEXT connections go through 6-step verification:
 □ Confirm byte order: little-endian for all multi-byte integers
 □ AUTH block always included after header
 □ checksum: SHA-256 first 8 bytes (set field to 0x00 before computing)
+□ Engine registered with central server — Engine ID obtained
+□ Provisional ID handling implemented (offline fallback)
 □ link_id issuance flow implemented
+□ Knowledge Afterlife Policy selected at knowledge registration
 □ Chunked / reference transfer branching implemented
 □ Delta == 0 → do not send
 □ Response error code handling
@@ -406,6 +484,6 @@ See `spec/kacp_header.h` for complete C/C++ struct definitions.
 
 ---
 
-*KACP — Kcode Artery Connection Protocol Specification v1.2*
+*KACP — Kcode Artery Connection Protocol Specification v1.3*
 *External Implementation Guide*
 *Apache License 2.0*
