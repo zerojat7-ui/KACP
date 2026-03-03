@@ -1,6 +1,6 @@
 # KACP — Kcode Artery Connection Protocol
 
-> **Version:** 1.1  
+> **Version:** 1.2  
 > **Status:** Specification Release  
 > **License:** Apache License 2.0
 
@@ -109,16 +109,67 @@ typedef struct {
 If you want to connect your language/framework to the Kcode Ontology Engine:
 
 ```
-1. Use magic code "KEXT"
-2. Include AUTH block (32 bytes) after the header
-3. Obtain auth_token from the Ontology Engine administrator
-4. Connect via TLS socket (port 7070)
-5. Follow the chunked/reference transfer rules
+1. Register your engine with the central Kcode Engine Server
+2. Use magic code "KEXT"
+3. Include AUTH block (32 bytes) after the header
+4. Obtain auth_token from the Ontology Engine administrator
+5. Connect via TLS socket (port 7070)
+6. Follow the chunked/reference transfer rules
+7. Select Knowledge Afterlife Policy when registering knowledge
 ```
 
 See `spec/kacp_spec.md` for full implementation details.  
 See `spec/kacp_header.h` for C struct definitions.  
 See `examples/` for sample implementations.
+
+---
+
+## Engine Registration & Lifecycle
+
+```
+Every Ontology Engine must register with the central Kcode Engine Server
+before issuing link_ids.
+
+Registration:
+    Engine first boot → central server registration → unique Engine ID issued
+    Engine ID is embedded in all link_ids this engine issues
+
+Offline fallback (Provisional ID):
+    If central server is unreachable, engine uses provisional ID range
+    Provisionally issued link_ids are isolated (Level 0) until re-registered
+
+Engine lifecycle:
+    Active        → Normal operation
+    Warning       → 2 years inactive (knowledge status report sent)
+    Final Warning → 2.5 years inactive
+    Frozen        → 3 years inactive (new issuance suspended, recovery possible)
+    Terminated    → 5 years inactive (Knowledge Afterlife Policy executed)
+
+Recovery:
+    Identity verification during Frozen state → full re-activation
+    All existing link_ids remain valid
+```
+
+---
+
+## Knowledge Afterlife Policy
+
+```
+Select one policy when registering knowledge (required).
+This selection is recorded as legal consent.
+
+Option A — Private Forever
+    Knowledge frozen on engine termination. Owner/heir recovers anytime.
+
+Option B — Delayed Public [Default]
+    Goes public after N years (1~10, default 3). Merge check applied.
+
+Option C — Public on Termination
+    Immediately public on engine termination.
+
+Option D — Designated Successor
+    Ownership transferred to a designated engine on termination.
+```
 
 ---
 
